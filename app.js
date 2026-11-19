@@ -172,6 +172,7 @@ async function renderForm(){
   catatan: notes || null,
   created_by: sessionUser.id,
   nama_spbu: spbu,
+  nomor_kendaraan: vehicle,
   jumlah_hari: 1
 };
    // total_amount tidak dikirim karena kolom tersebut dihitung otomatis oleh PostgreSQL.
