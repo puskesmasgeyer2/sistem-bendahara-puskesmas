@@ -143,9 +143,19 @@ async function renderForm(){
   const id=btn.dataset.submitRow,row=btn.closest('tr'),s=schedules.find(x=>x.id===id);if(!s)return;
   const mode=row.querySelector('.row-type').value;
   if(!mode){notice('Pilih Jenis Pengajuan terlebih dahulu.',true);return;}
-  const notes=row.querySelector('.row-notes').value.trim();
-  const vehicle=mode==='bbm'?row.querySelector('.row-vehicle').value.trim():null;
-  const spbu=mode==='bbm'?row.querySelector('.row-spbu').value.trim():null;
+  const notes = row.querySelector('.row-notes').value.trim();
+const spbu = mode === 'bbm'
+  ? row.querySelector('.row-spbu').value.trim()
+  : null;
+
+// Ambil nomor kendaraan langsung dari master petugas berdasarkan staff_id jadwal
+const petugas = staff.find(
+  x => String(x.id) === String(s.staff_id)
+);
+
+const vehicle = mode === 'bbm'
+  ? String(petugas?.nomor_kendaraan || '').trim()
+  : null;
   let fuel=null,price=0,litres=0,fuelCost=0,transport=0;
 
   if(mode==='bbm'){
@@ -153,7 +163,13 @@ async function renderForm(){
    price=Number(btn.dataset.price||0);litres=Number(btn.dataset.litres||0);
    const km=Number((row.querySelector('[data-distance]')?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
    if(!fuel||!price||!litres||!km){notice('Pilih BBM dan pastikan harga serta jarak tersedia.',true);return;}
-   if(!vehicle){notice('Nomor kendaraan belum diisi pada menu Petugas & Kendaraan.',true);return;}
+   if (!petugas || !vehicle) {
+  notice(
+    'Nomor kendaraan petugas belum tersedia. Periksa menu Petugas & Kendaraan.',
+    true
+  );
+  return;
+}
    fuelCost=price*litres;
   }else{
    transport=TARIF_8_JAM;
@@ -172,7 +188,7 @@ async function renderForm(){
   catatan: notes || null,
   created_by: sessionUser.id,
   nama_spbu: spbu,
-  nomor_kendaraan: vehicle,
+  nomor_kendaraan: mode === 'bbm' ? vehicle : null,
   jumlah_hari: 1
 };
    // total_amount tidak dikirim karena kolom tersebut dihitung otomatis oleh PostgreSQL.
