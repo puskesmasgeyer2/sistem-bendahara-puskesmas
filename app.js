@@ -145,11 +145,14 @@ async function renderForm(){
    const payload={
     schedule_id:s.id,transport_amount:transport,jenis_bbm:fuel,
     kebutuhan_bbm_liter:litres,harga_per_liter:price,nominal_bbm:fuelCost,
-    total_amount:transport+fuelCost,status:'submitted',catatan:notes||null,
+    status:'submitted',catatan:notes||null,
     created_by:sessionUser.id,nama_spbu:spbu,jumlah_hari:1
    };
-   const {error}=await db.from('transport_claims').insert(payload);if(error)throw error;
-   claims.push({id:`local-${s.id}`,schedule_id:s.id,...payload,created_at:new Date().toISOString()});
+   // total_amount tidak dikirim karena kolom tersebut dihitung otomatis oleh PostgreSQL.
+   const {data:savedClaim,error}=await db.from('transport_claims')
+    .insert(payload).select().single();
+   if(error)throw error;
+   claims.push(savedClaim);
    row.remove();
    const body=$('content').querySelector('.bulk-claim-table tbody');
    if(body&&!body.querySelector('tr'))body.innerHTML='<tr><td colspan="15" class="empty">Semua jadwal sudah diajukan.</td></tr>';
