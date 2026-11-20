@@ -5,6 +5,7 @@ const SUPABASE_PUBLISHABLE_KEY='sb_publishable_2hvrRkMS3sZ9CvyHHNdgFA_vsKJj8Mn';
 const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
 const $=id=>document.getElementById(id);
 let sessionUser=null,profile=null,schedules=[],claims=[],places=[],staff=[],programs=[],fuelTypes=[],fuelPrices=[],rates=[];
+let currentPage = 'dashboard';
 const pages={dashboard:'Dashboard',pengajuan:'Pengajuan Transport',riwayat:'Riwayat Pengajuan',verifikasi:'Verifikasi Bendahara',bbm:'Jenis BBM & Harga',tempat:'Tempat & Jarak',petugas:'Petugas & Kendaraan',laporan:'Laporan & Rekap'};
 const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n||0));
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -35,7 +36,7 @@ $('logoutButton').addEventListener('click',signOut);
 db.auth.onAuthStateChange((_event,session)=>{if(!session){profile=null;sessionUser=null;$('appShell').classList.add('hidden');$('loginCard').classList.remove('hidden');}});
 db.auth.getSession().then(({data,error})=>{if(!error&&data.session)loadProfile(data.session.user).catch(async e=>{await db.auth.signOut({scope:'local'});$('loginMessage').textContent=e.message;});});
 $('nav').addEventListener('click',e=>{const b=e.target.closest('[data-page]');if(b)navigate(b.dataset.page);});
-async function navigate(page){if(!pages[page])page='dashboard';if(['verifikasi','laporan','bbm','tempat','petugas'].includes(page)&&!isFinance()){notice('Menu ini hanya dapat diakses Bendahara atau Administrator.',true);return;}document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('pageTitle').textContent=pages[page];$('content').innerHTML='<div class="loading">Memuat data...</div>';notice('');try{const fn={dashboard:renderDashboard,pengajuan:renderForm,riwayat:()=>renderClaims(false),verifikasi:()=>renderClaims(true),bbm:renderFuelAdmin,tempat:renderPlacesAdmin,petugas:renderStaffAdmin,laporan:renderReport}[page];await fn();}catch(e){fail(e);}}
+async function navigate(page){if(!pages[page])page='dashboard';currentPage = page;if(['verifikasi','laporan','bbm','tempat','petugas'].includes(page)&&!isFinance()){notice('Menu ini hanya dapat diakses Bendahara atau Administrator.',true);return;}document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('pageTitle').textContent=pages[page];$('content').innerHTML='<div class="loading">Memuat data...</div>';notice('');try{const fn={dashboard:renderDashboard,pengajuan:renderForm,riwayat:()=>renderClaims(false),verifikasi:()=>renderClaims(true),bbm:renderFuelAdmin,tempat:renderPlacesAdmin,petugas:renderStaffAdmin,laporan:renderReport}[page];await fn();}catch(e){fail(e);}}
 async function loadMasters(){const queries=await Promise.all([
  db.from('schedules').select('id,activity_date,program_id,staff_id,place_id,notes,status').eq('status','valid').order('activity_date',{ascending:false}).limit(3000),
  db.from('places').select('id,place_name,is_active').order('place_name'),db.from('staff').select('id,full_name,employee_code,golongan,pangkat,ruang,nomor_kendaraan,is_active').order('full_name'),
@@ -75,7 +76,32 @@ function enrichClaim(c) {
   };
 }
 
-function claimRows(finance){let rows=claims.map(enrichClaim);if(!finance&&profile.role==='petugas')rows=rows.filter(c=>c.staff_id===profile.staff_id||c.created_by===sessionUser.id);return rows;}
+
+function claimRows(finance) {
+  let rows = claims.map(enrichClaim);
+
+  if (!finance && profile.role === 'petugas') {
+    rows = rows.filter(c =>
+      c.staff_id === profile.staff_id ||
+      c.created_by === sessionUser.id
+    );
+  }
+
+  // Verifikasi hanya menampilkan pengajuan yang menunggu keputusan.
+  if (finance && currentPage === 'verifikasi') {
+    rows = rows.filter(c => c.status === 'diajukan');
+  }
+
+  // Riwayat hanya menampilkan pengajuan yang sudah diputuskan.
+  if (currentPage === 'riwayat') {
+    rows = rows.filter(c =>
+      ['disetujui', 'ditolak', 'dibayar'].includes(c.status)
+    );
+  }
+
+  return rows;
+}
+
 
 function claimsTable(rows, actions = false) {
   if (!rows.length) {
@@ -109,18 +135,26 @@ function claimsTable(rows, actions = false) {
             ? '<span title="Sudah disetujui" style="color:#087f5b;font-weight:800;font-size:18px;margin-right:5px">✓</span>'
             : '';
 
-          const pendingActions = actions && ['diajukan', 'draft'].includes(c.status)
-            ? `<div class="table-actions">
-                <button class="btn-sm" data-action="approve" data-id="${esc(c.claim_id)}">Setujui</button>
-                <button class="btn-sm btn-red" data-action="reject" data-id="${esc(c.claim_id)}">Tolak</button>
-              </div>`
-            : '';
+          
+const pendingActions = actions === 'verifikasi' && c.status === 'diajukan'
+  ? `<div class="table-actions">
+      <button class="btn-sm" data-action="approve" data-id="${esc(c.claim_id)}">
+        Setujui
+      </button>
+      <button class="btn-sm btn-red" data-action="reject" data-id="${esc(c.claim_id)}">
+        Tolak
+      </button>
+    </div>`
+  : '';
 
-          const editAction = actions
-            ? `<div class="table-actions">
-                <button class="btn-sm btn-light" data-action="edit" data-id="${esc(c.claim_id)}">Edit status</button>
-              </div>`
-            : '';
+const editAction = actions === 'riwayat'
+  ? `<div class="table-actions">
+      <button class="btn-sm btn-light" data-action="edit" data-id="${esc(c.claim_id)}">
+        Edit status
+      </button>
+    </div>`
+  : '';
+
 
           return `<tr>
             <td>${i + 1}</td>
@@ -309,6 +343,7 @@ async function renderClaims(finance) {
   await loadClaims();
 
   // Tampilkan seluruh status pada riwayat dan verifikasi.
+  const mode = finance ? 'verifikasi' : 'riwayat';
   const rows = claimRows(finance);
 
   $('content').innerHTML = filterPanel() + `
@@ -318,17 +353,17 @@ async function renderClaims(finance) {
         <button id="refreshClaims" class="btn-sm btn-light">Muat ulang</button>
       </div>
       <div id="claimResult">
-        ${claimsTable(rows, isFinance())}
+        ${claimsTable(rows, mode)}
       </div>
     </section>`;
 
   $('showFiltered').onclick = () => {
-    $('claimResult').innerHTML = claimsTable(
-      applyClaimFilter(rows),
-      isFinance()
-    );
-  };
-
+  $('claimResult').innerHTML = claimsTable(
+    applyClaimFilter(rows),
+    mode
+  );
+};
+   
   $('refreshClaims').onclick = () => renderClaims(finance);
 
   $('claimResult').addEventListener('click', async e => {
@@ -423,6 +458,7 @@ Masukkan angka 1–4:`,
         `Status berhasil diubah menjadi ${statusLabel(data.status)}.`
       );
 
+      await loadClaims();
       await renderClaims(finance);
 
     } catch (err) {
