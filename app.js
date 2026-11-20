@@ -76,7 +76,78 @@ function enrichClaim(c) {
 }
 
 function claimRows(finance){let rows=claims.map(enrichClaim);if(!finance&&profile.role==='petugas')rows=rows.filter(c=>c.staff_id===profile.staff_id||c.created_by===sessionUser.id);return rows;}
-function claimsTable(rows,actions=false){if(!rows.length)return'<div class="empty">Tidak ada data untuk filter yang dipilih.</div>';return`<div class="table-wrap"><table class="data-table"><thead><tr><th>No</th><th>Nama / NIP</th><th>Gol.</th><th>Tanggal kegiatan</th><th>Program</th><th>Lokasi</th><th>Jenis pengajuan</th><th>Biaya transport</th><th>Jumlah hari</th><th>Jumlah penerimaan</th><th>Nama SPBU</th><th>No. Kendaraan</th><th>Status / Tindakan</th></tr></thead><tbody>${rows.map((c,i)=>`<tr><td>${i+1}</td><td><b>${esc(c.staff_name)}</b><br><small>${esc(c.employee_code)}</small></td><td>${esc(c.golongan)}</td><td>${esc(c.activity_date)}</td><td>${esc(c.program_name)}</td><td>${esc(c.place_name)}</td><td>${c.jenis_bbm?'BBM':'8 Jam'}</td><td class="money">${money(c.transport_amount)}</td><td>${Number(c.jumlah_hari||1)}</td><td class="money">${money(c.total_amount)}</td><td>${esc(c.nama_spbu||'-')}</td><td>${esc(c.nomor_kendaraan)}</td><td><span class="status ${statusClass(c.status)}">${esc(statusLabel(c.status))}</span>${actions&&['diajukan','draft'].includes(c.status)?`<div class="table-actions"><button class="btn-sm" data-action="approve" data-id="${esc(c.claim_id)}">Setujui</button><button class="btn-sm btn-red" data-action="reject" data-id="${esc(c.claim_id)}">Tolak</button></div>`:''}</td></tr>`).join('')}</tbody></table></div>`;}
+
+function claimsTable(rows, actions = false) {
+  if (!rows.length) {
+    return '<div class="empty">Tidak ada data untuk filter yang dipilih.</div>';
+  }
+
+  return `<div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>No</th>
+          <th>Nama / NIP</th>
+          <th>Gol.</th>
+          <th>Tanggal kegiatan</th>
+          <th>Program</th>
+          <th>Lokasi</th>
+          <th>Jenis pengajuan</th>
+          <th>Biaya transport</th>
+          <th>Jumlah hari</th>
+          <th>Jumlah penerimaan</th>
+          <th>Nama SPBU</th>
+          <th>No. Kendaraan</th>
+          <th>Status / Tindakan</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((c, i) => {
+          const approved = ['disetujui', 'dibayar'].includes(c.status);
+
+          const mark = approved
+            ? '<span title="Sudah disetujui" style="color:#087f5b;font-weight:800;font-size:18px;margin-right:5px">✓</span>'
+            : '';
+
+          const pendingActions = actions && ['diajukan', 'draft'].includes(c.status)
+            ? `<div class="table-actions">
+                <button class="btn-sm" data-action="approve" data-id="${esc(c.claim_id)}">Setujui</button>
+                <button class="btn-sm btn-red" data-action="reject" data-id="${esc(c.claim_id)}">Tolak</button>
+              </div>`
+            : '';
+
+          const editAction = actions
+            ? `<div class="table-actions">
+                <button class="btn-sm btn-light" data-action="edit" data-id="${esc(c.claim_id)}">Edit status</button>
+              </div>`
+            : '';
+
+          return `<tr>
+            <td>${i + 1}</td>
+            <td><b>${esc(c.staff_name)}</b><br><small>${esc(c.employee_code)}</small></td>
+            <td>${esc(c.golongan)}</td>
+            <td>${esc(c.activity_date)}</td>
+            <td>${esc(c.program_name)}</td>
+            <td>${esc(c.place_name)}</td>
+            <td>${c.jenis_bbm ? 'BBM' : '8 Jam'}</td>
+            <td class="money">${money(c.transport_amount)}</td>
+            <td>${Number(c.jumlah_hari || 1)}</td>
+            <td class="money">${money(c.total_amount)}</td>
+            <td>${esc(c.nama_spbu || '-')}</td>
+            <td>${esc(c.nomor_kendaraan)}</td>
+            <td>
+              ${mark}
+              <span class="status ${statusClass(c.status)}">${esc(statusLabel(c.status))}</span>
+              ${pendingActions}
+              ${editAction}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
 function filterPanel(){const now=new Date();return`<section class="panel"><h3>Filter daftar pengajuan</h3><div class="filters"><div><label for="filterMonth">Bulan</label><select id="filterMonth"><option value="">Semua bulan</option>${['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'].map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${i===now.getMonth()?'selected':''}>${m}</option>`).join('')}</select></div><div><label for="filterYear">Tahun</label><select id="filterYear"><option value="">Semua tahun</option>${Array.from({length:7},(_,i)=>now.getFullYear()-3+i).map(y=>`<option ${y===now.getFullYear()?'selected':''}>${y}</option>`).join('')}</select></div><div><label for="filterProgram">Nama program</label><select id="filterProgram"><option value="">Semua program</option>${programs.filter(p=>p.is_active).map(p=>`<option value="${esc(p.id)}">${esc(p.program_name)}</option>`).join('')}</select></div><button id="showFiltered">Tampilkan Data</button></div></section>`;}
 function applyClaimFilter(rows){const m=$('filterMonth').value,y=$('filterYear').value,p=$('filterProgram').value;return rows.filter(c=>(!m||String(c.activity_date||'').slice(5,7)===m)&&(!y||String(c.activity_date||'').slice(0,4)===y)&&(!p||c.program_id===p));}
 async function renderDashboard(){await loadMasters();await loadClaims();const rows = claimRows(true),
@@ -232,20 +303,135 @@ const vehicle = mode === 'bbm'
   }catch(err){notice('Gagal menyimpan pengajuan: '+err.message,true);btn.disabled=false;btn.textContent='Ajukan';}
  });
 }
+
 async function renderClaims(finance) {
   await loadMasters();
   await loadClaims();
 
-  let rows = claimRows(finance);
+  // Tampilkan seluruh status pada riwayat dan verifikasi.
+  const rows = claimRows(finance);
 
-  // Verifikasi hanya menampilkan pengajuan yang menunggu verifikasi
-  if (finance) {
-    rows = rows.filter(c => c.status === 'diajukan');
-  }$('content').innerHTML=filterPanel()+`<section class="panel"><div class="section-head"><h3>${finance?'Daftar pengajuan untuk diverifikasi':'Riwayat pengajuan'}</h3><button id="refreshClaims" class="btn-sm btn-light">Muat ulang</button></div><div id="claimResult">${claimsTable(rows,finance)}</div></section>`;$('showFiltered').onclick=()=>{$('claimResult').innerHTML=claimsTable(applyClaimFilter(rows),finance);};$('refreshClaims').onclick=()=>renderClaims(finance);$('claimResult').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const action=b.dataset.action,id=b.dataset.id;if(!confirm(action==='approve'?'Setujui pengajuan ini?':'Tolak pengajuan ini?'))return;const patch = {
-  status: action === 'approve' ? 'disetujui' : 'ditolak',
-  updated_by: sessionUser.id,
-  updated_at: new Date().toISOString()
-};const {error}=await db.from('transport_claims').update(patch).eq('id',id);if(error){notice('Gagal memperbarui status: '+error.message,true);return;}notice(action==='approve'?'Pengajuan disetujui.':'Pengajuan ditolak.');await renderClaims(finance);});}
+  $('content').innerHTML = filterPanel() + `
+    <section class="panel">
+      <div class="section-head">
+        <h3>${finance ? 'Daftar pengajuan untuk diverifikasi' : 'Riwayat pengajuan'}</h3>
+        <button id="refreshClaims" class="btn-sm btn-light">Muat ulang</button>
+      </div>
+      <div id="claimResult">
+        ${claimsTable(rows, isFinance())}
+      </div>
+    </section>`;
+
+  $('showFiltered').onclick = () => {
+    $('claimResult').innerHTML = claimsTable(
+      applyClaimFilter(rows),
+      isFinance()
+    );
+  };
+
+  $('refreshClaims').onclick = () => renderClaims(finance);
+
+  $('claimResult').addEventListener('click', async e => {
+    const b = e.target.closest('[data-action]');
+    if (!b) return;
+
+    const action = b.dataset.action;
+    const id = b.dataset.id;
+    let nextStatus;
+
+    if (action === 'approve') {
+      nextStatus = 'disetujui';
+    } else if (action === 'reject') {
+      nextStatus = 'ditolak';
+    } else if (action === 'edit') {
+      const current = claims.find(
+        c => String(c.id) === String(id)
+      )?.status || 'diajukan';
+
+      const choices = [
+        'diajukan',
+        'disetujui',
+        'ditolak',
+        'dibayar'
+      ];
+
+      const answer = prompt(
+        `Status saat ini: ${statusLabel(current)}
+
+Pilih status baru:
+1. Menunggu verifikasi
+2. Disetujui
+3. Ditolak
+4. Dibayar
+
+Masukkan angka 1–4:`,
+        String(choices.indexOf(current) + 1)
+      );
+
+      if (answer === null) return;
+
+      const choice = answer.trim();
+
+      nextStatus = /^[1-4]$/.test(choice)
+        ? choices[Number(choice) - 1]
+        : null;
+
+      if (!nextStatus) {
+        notice('Pilihan tidak valid. Masukkan angka 1–4.', true);
+        return;
+      }
+    } else {
+      return;
+    }
+
+    const confirmation = action === 'approve'
+      ? 'Setujui pengajuan ini?'
+      : action === 'reject'
+        ? 'Tolak pengajuan ini?'
+        : `Ubah status menjadi "${statusLabel(nextStatus)}"?`;
+
+    if (!confirm(confirmation)) return;
+
+    b.disabled = true;
+
+    const patch = {
+      status: nextStatus,
+      updated_by: sessionUser.id,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      const { data, error } = await db
+        .from('transport_claims')
+        .update(patch)
+        .eq('id', id)
+        .select('id,status')
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        notice(
+          'Status tidak berubah. Periksa izin UPDATE pada tabel transport_claims di Supabase.',
+          true
+        );
+        b.disabled = false;
+        return;
+      }
+
+      notice(
+        `Status berhasil diubah menjadi ${statusLabel(data.status)}.`
+      );
+
+      await renderClaims(finance);
+
+    } catch (err) {
+      notice('Gagal memperbarui status: ' + err.message, true);
+      b.disabled = false;
+    }
+  });
+}
+
 async function renderFuelAdmin(){await loadMasters();const current=fuelTypes.map(f=>{const price=fuelPrices.find(p=>p.jenis_bbm===f.jenis_bbm&&p.berlaku_mulai<=today()&&(!p.berlaku_sampai||p.berlaku_sampai>=today()));return{...f,harga:price?.harga_per_liter??''};});$('content').innerHTML=`<section class="panel"><h3>Tambah jenis BBM / harga</h3><form id="fuelForm" class="form-inline"><div><label>Jenis BBM</label><input id="fuelName" required placeholder="Contoh: Pertamax"></div><div><label>Harga per liter (Rp)</label><input id="fuelPriceNew" type="number" min="1" required></div><div><label>Berlaku mulai</label><input id="fuelStart" type="date" value="${today()}" required></div><div><label>Keterangan</label><input id="fuelNote"></div><div class="span-all"><button type="submit">Simpan Jenis / Harga BBM</button></div></form></section><section class="panel"><h3>Daftar jenis BBM dan harga aktif</h3>${current.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Jenis BBM</th><th>Harga / liter</th><th>Status</th><th>Aksi</th></tr></thead><tbody>${current.map(f=>`<tr><td>${esc(f.jenis_bbm)}</td><td>${money(f.harga)}</td><td>${f.is_active?'Aktif':'Nonaktif'}</td><td><button class="btn-sm btn-light" data-edit-fuel="${esc(f.id)}">Ubah harga</button> <button class="btn-sm btn-red" data-disable-fuel="${esc(f.id)}">Nonaktifkan</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Belum ada jenis BBM.</div>'}</section>`;
 $('fuelForm').onsubmit=async e=>{e.preventDefault();try{const name=$('fuelName').value.trim(),price=Number($('fuelPriceNew').value),start=$('fuelStart').value;if(!fuelTypes.some(f=>f.jenis_bbm.toLowerCase()===name.toLowerCase())){const {error}=await db.from('fuel_types').insert({jenis_bbm:name,is_active:true});if(error)throw error;}const {error:oldErr}=await db.from('fuel_price_history').update({berlaku_sampai:new Date(new Date(start+'T00:00:00').getTime()-86400000).toISOString().slice(0,10),is_active:false}).eq('jenis_bbm',name).eq('is_active',true).is('berlaku_sampai',null);if(oldErr)throw oldErr;const {error}=await db.from('fuel_price_history').insert({jenis_bbm:name,harga_per_liter:price,berlaku_mulai:start,is_active:true,keterangan:$('fuelNote').value.trim()||null});if(error)throw error;notice('Jenis BBM dan harga berhasil disimpan.');await renderFuelAdmin();}catch(err){notice('Gagal menyimpan BBM: '+err.message,true);}};
 $('content').onclick=async e=>{const edit=e.target.closest('[data-edit-fuel]'),del=e.target.closest('[data-disable-fuel]');if(edit){const f=fuelTypes.find(x=>x.id===edit.dataset.editFuel);const p=prompt(`Masukkan harga baru per liter untuk ${f.jenis_bbm}:`);if(p===null)return;const price=Number(p);if(!(price>0))return notice('Harga harus lebih dari nol.',true);$('fuelName').value=f.jenis_bbm;$('fuelPriceNew').value=price;$('fuelStart').focus();notice('Isi tanggal berlaku dan klik Simpan Jenis / Harga BBM.');}if(del&&confirm('Nonaktifkan jenis BBM ini? Riwayat harga tidak dihapus.')){const f=fuelTypes.find(x=>x.id===del.dataset.disableFuel);const {error}=await db.from('fuel_types').update({is_active:false}).eq('id',f.id);if(error)notice(error.message,true);else{notice('Jenis BBM dinonaktifkan.');await renderFuelAdmin();}}};}
