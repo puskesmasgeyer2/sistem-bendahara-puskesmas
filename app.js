@@ -45,7 +45,36 @@ async function loadMasters(){const queries=await Promise.all([
 async function loadClaims(){const {data,error}=await db.from('transport_claims').select('*').order('created_at',{ascending:false}).limit(3000);if(error)throw error;claims=data||[];}
 function rateFor(placeId,method){return rates.find(r=>r.place_id===placeId&&r.metode===method)||rates.find(r=>!r.place_id&&r.metode===method);}
 function enrichSchedule(s){const p=places.find(x=>String(x.id)===String(s.place_id)),st=staff.find(x=>String(x.id)===String(s.staff_id)),pr=programs.find(x=>String(x.id)===String(s.program_id));return{...s,place_name:p?.place_name||'-',staff_name:st?.full_name||'-',employee_code:st?.employee_code||'-',golongan:st?.golongan||'-',nomor_kendaraan:String(st?.nomor_kendaraan||'').trim(),program_name:pr?.program_name||'-',program_code:pr?.program_code||'-'};}
-function enrichClaim(c){const s=enrichSchedule(schedules.find(x=>x.id===c.schedule_id)||{});return{...c,...s,nomor_kendaraan:c.nomor_kendaraan||s.nomor_kendaraan,claim_id:c.id,nominal_bbm:Number(c.nominal_bbm||0),total_amount:Number(c.total_amount??(Number(c.transport_amount||0)+Number(c.nominal_bbm||0)))};}
+
+function enrichClaim(c) {
+  const s = enrichSchedule(
+    schedules.find(x => x.id === c.schedule_id) || {}
+  );
+
+  return {
+    ...s,
+    ...c,
+
+    // Data identitas diambil dari jadwal/master
+    staff_name: s.staff_name,
+    employee_code: s.employee_code,
+    golongan: s.golongan,
+    place_name: s.place_name,
+    program_name: s.program_name,
+    program_code: s.program_code,
+
+    // Data kendaraan pengajuan diutamakan
+    nomor_kendaraan: c.nomor_kendaraan || s.nomor_kendaraan,
+
+    claim_id: c.id,
+    nominal_bbm: Number(c.nominal_bbm || 0),
+    total_amount: Number(
+      c.total_amount ??
+      (Number(c.transport_amount || 0) + Number(c.nominal_bbm || 0))
+    )
+  };
+}
+
 function claimRows(finance){let rows=claims.map(enrichClaim);if(!finance&&profile.role==='petugas')rows=rows.filter(c=>c.staff_id===profile.staff_id||c.created_by===sessionUser.id);return rows;}
 function claimsTable(rows,actions=false){if(!rows.length)return'<div class="empty">Tidak ada data untuk filter yang dipilih.</div>';return`<div class="table-wrap"><table class="data-table"><thead><tr><th>No</th><th>Nama / NIP</th><th>Gol.</th><th>Tanggal kegiatan</th><th>Program</th><th>Lokasi</th><th>Jenis pengajuan</th><th>Biaya transport</th><th>Jumlah hari</th><th>Jumlah penerimaan</th><th>Nama SPBU</th><th>No. Kendaraan</th><th>Status / Tindakan</th></tr></thead><tbody>${rows.map((c,i)=>`<tr><td>${i+1}</td><td><b>${esc(c.staff_name)}</b><br><small>${esc(c.employee_code)}</small></td><td>${esc(c.golongan)}</td><td>${esc(c.activity_date)}</td><td>${esc(c.program_name)}</td><td>${esc(c.place_name)}</td><td>${c.jenis_bbm?'BBM':'8 Jam'}</td><td class="money">${money(c.transport_amount)}</td><td>${Number(c.jumlah_hari||1)}</td><td class="money">${money(c.total_amount)}</td><td>${esc(c.nama_spbu||'-')}</td><td>${esc(c.nomor_kendaraan)}</td><td><span class="status ${statusClass(c.status)}">${esc(statusLabel(c.status))}</span>${actions&&['diajukan','draft'].includes(c.status)?`<div class="table-actions"><button class="btn-sm" data-action="approve" data-id="${esc(c.claim_id)}">Setujui</button><button class="btn-sm btn-red" data-action="reject" data-id="${esc(c.claim_id)}">Tolak</button></div>`:''}</td></tr>`).join('')}</tbody></table></div>`;}
 function filterPanel(){const now=new Date();return`<section class="panel"><h3>Filter daftar pengajuan</h3><div class="filters"><div><label for="filterMonth">Bulan</label><select id="filterMonth"><option value="">Semua bulan</option>${['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'].map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${i===now.getMonth()?'selected':''}>${m}</option>`).join('')}</select></div><div><label for="filterYear">Tahun</label><select id="filterYear"><option value="">Semua tahun</option>${Array.from({length:7},(_,i)=>now.getFullYear()-3+i).map(y=>`<option ${y===now.getFullYear()?'selected':''}>${y}</option>`).join('')}</select></div><div><label for="filterProgram">Nama program</label><select id="filterProgram"><option value="">Semua program</option>${programs.filter(p=>p.is_active).map(p=>`<option value="${esc(p.id)}">${esc(p.program_name)}</option>`).join('')}</select></div><button id="showFiltered">Tampilkan Data</button></div></section>`;}
@@ -203,7 +232,16 @@ const vehicle = mode === 'bbm'
   }catch(err){notice('Gagal menyimpan pengajuan: '+err.message,true);btn.disabled=false;btn.textContent='Ajukan';}
  });
 }
-async function renderClaims(finance){await loadMasters();await loadClaims();let rows=claimRows(finance);$('content').innerHTML=filterPanel()+`<section class="panel"><div class="section-head"><h3>${finance?'Daftar pengajuan untuk diverifikasi':'Riwayat pengajuan'}</h3><button id="refreshClaims" class="btn-sm btn-light">Muat ulang</button></div><div id="claimResult">${claimsTable(rows,finance)}</div></section>`;$('showFiltered').onclick=()=>{$('claimResult').innerHTML=claimsTable(applyClaimFilter(rows),finance);};$('refreshClaims').onclick=()=>renderClaims(finance);$('claimResult').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const action=b.dataset.action,id=b.dataset.id;if(!confirm(action==='approve'?'Setujui pengajuan ini?':'Tolak pengajuan ini?'))return;const patch = {
+async function renderClaims(finance) {
+  await loadMasters();
+  await loadClaims();
+
+  let rows = claimRows(finance);
+
+  // Verifikasi hanya menampilkan pengajuan yang menunggu verifikasi
+  if (finance) {
+    rows = rows.filter(c => c.status === 'diajukan');
+  }$('content').innerHTML=filterPanel()+`<section class="panel"><div class="section-head"><h3>${finance?'Daftar pengajuan untuk diverifikasi':'Riwayat pengajuan'}</h3><button id="refreshClaims" class="btn-sm btn-light">Muat ulang</button></div><div id="claimResult">${claimsTable(rows,finance)}</div></section>`;$('showFiltered').onclick=()=>{$('claimResult').innerHTML=claimsTable(applyClaimFilter(rows),finance);};$('refreshClaims').onclick=()=>renderClaims(finance);$('claimResult').addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const action=b.dataset.action,id=b.dataset.id;if(!confirm(action==='approve'?'Setujui pengajuan ini?':'Tolak pengajuan ini?'))return;const patch = {
   status: action === 'approve' ? 'disetujui' : 'ditolak',
   updated_by: sessionUser.id,
   updated_at: new Date().toISOString()
