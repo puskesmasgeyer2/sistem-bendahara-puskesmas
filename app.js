@@ -45,7 +45,50 @@ async function loadMasters(){const queries=await Promise.all([
  ]);for(const q of queries)if(q.error)throw q.error;const [s,p,st,pr,ft,fp,rt]=queries.map(q=>q.data||[]);schedules=s;places=p;staff=st;programs=pr;fuelTypes=ft;fuelPrices=fp;rates=rt;}
 async function loadClaims(){const {data,error}=await db.from('transport_claims').select('*').order('created_at',{ascending:false}).limit(3000);if(error)throw error;claims=data||[];}
 function rateFor(placeId,method){return rates.find(r=>r.place_id===placeId&&r.metode===method)||rates.find(r=>!r.place_id&&r.metode===method);}
-function enrichSchedule(s){const p=places.find(x=>String(x.id)===String(s.place_id)),st=staff.find(x=>String(x.id)===String(s.staff_id)),pr=programs.find(x=>String(x.id)===String(s.program_id));return{...s,place_name:p?.place_name||'-',staff_name:st?.full_name||'-',employee_code:st?.employee_code||'-',golongan:st?.golongan||'-',nomor_kendaraan:String(st?.nomor_kendaraan||'').trim(),program_name:pr?.program_name||'-',program_code:pr?.program_code||'-'};}
+
+function golonganDisplay(data) {
+  const golongan = String(data?.golongan || '').trim();
+  const pangkat = String(data?.pangkat || '').trim();
+  const ruang = String(data?.ruang || '').trim();
+
+  const bagian = [];
+
+  if (golongan) {
+    bagian.push(`<b>${esc(golongan)}</b>`);
+  }
+
+  // Pangkat dan ruang hanya ditampilkan jika tersedia.
+  if (pangkat) {
+    bagian.push(esc(pangkat));
+  }
+
+  if (ruang) {
+    bagian.push(`Ruang ${esc(ruang)}`);
+  }
+
+  return bagian.length
+    ? bagian.join('<br>')
+    : '-';
+}
+
+function enrichSchedule(s) {
+  const p = places.find(x => String(x.id) === String(s.place_id));
+  const st = staff.find(x => String(x.id) === String(s.staff_id));
+  const pr = programs.find(x => String(x.id) === String(s.program_id));
+
+  return {
+    ...s,
+    place_name: p?.place_name || '-',
+    staff_name: st?.full_name || '-',
+    employee_code: st?.employee_code || '-',
+    golongan: st?.golongan || '-',
+    pangkat: st?.pangkat || '',
+    ruang: st?.ruang || '',
+    nomor_kendaraan: String(st?.nomor_kendaraan || '').trim(),
+    program_name: pr?.program_name || '-',
+    program_code: pr?.program_code || '-'
+  };
+}
 
 function enrichClaim(c) {
   const s = enrichSchedule(
@@ -60,6 +103,8 @@ function enrichClaim(c) {
     staff_name: s.staff_name,
     employee_code: s.employee_code,
     golongan: s.golongan,
+    pangkat: s.pangkat,
+    ruang: s.ruang,
     place_name: s.place_name,
     program_name: s.program_name,
     program_code: s.program_code,
@@ -159,7 +204,7 @@ const editAction = actions === 'riwayat'
           return `<tr>
             <td>${i + 1}</td>
             <td><b>${esc(c.staff_name)}</b><br><small>${esc(c.employee_code)}</small></td>
-            <td>${esc(c.golongan)}</td>
+            <td>${golonganDisplay(c)}</td>
             <td>${esc(c.activity_date)}</td>
             <td>${esc(c.program_name)}</td>
             <td>${esc(c.place_name)}</td>
@@ -735,7 +780,7 @@ async function renderReport() {
     printTransportReport(displayedRows, title);
   };
 }
-function exportCsv(rows){const keys=['activity_date','program_name','staff_name','employee_code','golongan','place_name','transport_amount','jumlah_hari','total_amount','nama_spbu','nomor_kendaraan','jenis_bbm','kebutuhan_bbm_liter','harga_per_liter','nominal_bbm','status'];const csv=[keys.join(','),...rows.map(r=>keys.map(k=>'"'+String(r[k]??'').replace(/"/g,'""')+'"').join(','))].join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='rekap-bendahara.csv';a.click();URL.revokeObjectURL(a.href);}
+function exportCsv(rows){const keys=['activity_date','program_name','staff_name','employee_code','golongan','pangkat','ruang','place_name','transport_amount','jumlah_hari','total_amount','nama_spbu','nomor_kendaraan','jenis_bbm','kebutuhan_bbm_liter','harga_per_liter','nominal_bbm','status'];const csv=[keys.join(','),...rows.map(r=>keys.map(k=>'"'+String(r[k]??'').replace(/"/g,'""')+'"').join(','))].join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='rekap-bendahara.csv';a.click();URL.revokeObjectURL(a.href);}
 
 function printTransportReport(rows, filter) {
   if (!rows.length) {
@@ -816,7 +861,7 @@ function printTransportReport(rows, filter) {
             <b>${esc(c.staff_name || '-')}</b><br>
             <span class="small">NIP. ${esc(c.employee_code || '-')}</span>
           </td>
-          <td class="center">${esc(c.golongan || '-')}</td>
+          <td class="center">${golonganDisplay(c)}</td>
           <td class="center">${esc(formatPrintDate(c.activity_date))}</td>
           <td>${esc(c.place_name || '-')}</td>
           <td class="center">${esc(c.jenis_bbm || '-')}</td>
@@ -900,7 +945,7 @@ function printTransportReport(rows, filter) {
             <b>${esc(c.staff_name || '-')}</b><br>
             <span class="small">NIP. ${esc(c.employee_code || '-')}</span>
           </td>
-          <td class="center">${esc(c.golongan || '-')}</td>
+          <td class="center">${golonganDisplay(c)}</td>
           <td class="center">${esc(formatPrintDate(c.activity_date))}</td>
           <td>${esc(c.place_name || '-')}</td>
           <td class="right">${money(transport)}</td>
