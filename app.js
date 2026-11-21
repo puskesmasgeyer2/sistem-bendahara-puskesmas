@@ -633,14 +633,16 @@ function printTransportReport(rows, filter) {
     return;
   }
 
-  // Urutkan berdasarkan tanggal terkecil
+  // Urutkan tanggal terkecil, lalu nama petugas.
   const sortedRows = [...rows].sort((a, b) =>
     String(a.activity_date || '').localeCompare(
       String(b.activity_date || '')
+    ) || String(a.staff_name || '').localeCompare(
+      String(b.staff_name || '')
     )
   );
 
-  // Kelompokkan data berdasarkan tanggal yang sama
+  // Kelompokkan petugas berdasarkan tanggal kegiatan.
   const grouped = {};
 
   sortedRows.forEach(row => {
@@ -655,29 +657,16 @@ function printTransportReport(rows, filter) {
 
   const dates = Object.keys(grouped).sort();
 
-  // Jika semua program dipilih, tampilkan kolom program
-  const showProgram = filter.program === 'Semua Program';
-
-  let number = 1;
-  let grandTotal = 0;
-  let grandTransport = 0;
-  let grandDays = 0;
-
   let tableRows = '';
+  let number = 1;
+  let grandTransport = 0;
+  let grandTotal = 0;
+  let grandDays = 0;
 
   dates.forEach(date => {
     const dateRows = grouped[date];
 
-    // Baris pemisah kelompok tanggal
-    tableRows += `
-      <tr class="date-group">
-        <td colspan="${showProgram ? 11 : 10}">
-          Tanggal Perjalanan Dinas: ${esc(date)}
-        </td>
-      </tr>
-    `;
-
-    dateRows.forEach(c => {
+    dateRows.forEach((c, index) => {
       const transport = Number(c.transport_amount || 0);
       const total = Number(c.total_amount || 0);
       const days = Number(c.jumlah_hari || 1);
@@ -686,20 +675,33 @@ function printTransportReport(rows, filter) {
       grandTotal += total;
       grandDays += days;
 
+      const dateCell = index === 0
+        ? `<td class="center" rowspan="${dateRows.length}">
+             ${esc(formatPrintDate(date))}
+           </td>`
+        : '';
+
+      const numberCell = index === 0
+        ? `<td class="center" rowspan="${dateRows.length}">
+             ${number++}
+           </td>`
+        : '';
+
       tableRows += `
         <tr>
-          <td class="center">${number++}</td>
+          ${numberCell}
 
-          <td>
-            <b>${esc(c.staff_name)}</b><br>
-            <small>${esc(c.employee_code || '-')}</small>
+          <td class="name-cell">
+            ${esc(c.staff_name || '-')}
+            <br>
+            <span class="nip">NIP. ${esc(c.employee_code || '-')}</span>
           </td>
 
-          <td class="center">${esc(c.golongan || '-')}</td>
+          <td class="center">
+            ${esc(c.golongan || '-')}
+          </td>
 
-          ${showProgram ? `
-            <td>${esc(c.program_name || '-')}</td>
-          ` : ''}
+          ${dateCell}
 
           <td>${esc(c.place_name || '-')}</td>
 
@@ -709,7 +711,7 @@ function printTransportReport(rows, filter) {
 
           <td class="right">${money(total)}</td>
 
-          <td>${esc(c.nama_spbu || '-')}</td>
+          <td class="center">${esc(c.nama_spbu || '-')}</td>
 
           <td class="center">${esc(c.nomor_kendaraan || '-')}</td>
 
@@ -719,16 +721,18 @@ function printTransportReport(rows, filter) {
     });
   });
 
-  const columnCount = showProgram ? 11 : 10;
+  const periodText = filter.month === 'Semua Bulan'
+    ? getYearsFromRows(sortedRows)
+    : filter.month + ' ' + getYearsFromRows(sortedRows);
 
-  const programHeading = filter.program === 'Semua Program'
+  const programText = filter.program === 'Semua Program'
     ? 'SELURUH PROGRAM'
-    : esc(filter.program);
+    : filter.program;
 
   const printWindow = window.open('', '_blank');
 
   if (!printWindow) {
-    alert('Jendela cetak diblokir browser. Izinkan pop-up untuk situs ini.');
+    alert('Pop-up diblokir browser. Izinkan pop-up untuk situs ini.');
     return;
   }
 
@@ -737,7 +741,7 @@ function printTransportReport(rows, filter) {
     <html lang="id">
     <head>
       <meta charset="UTF-8">
-      <title>Rekap Pertanggungjawaban Transport</title>
+      <title>Daftar Penerimaan Biaya Transport</title>
 
       <style>
         @page {
@@ -747,32 +751,35 @@ function printTransportReport(rows, filter) {
 
         body {
           font-family: Arial, sans-serif;
-          color: #000;
           font-size: 10px;
+          color: #000;
         }
 
-        h3 {
+        .heading {
           text-align: center;
-          font-size: 14px;
-          margin: 0 0 8px;
+          font-weight: bold;
+          font-size: 13px;
+          margin-top: 12px;
+          margin-bottom: 18px;
+          line-height: 1.5;
         }
 
-        .subtitle {
+        .program {
           text-align: center;
           font-size: 12px;
-          font-weight: bold;
-          margin-bottom: 5px;
+          margin-bottom: 7px;
         }
 
         .period {
           text-align: center;
-          margin-bottom: 18px;
           font-size: 11px;
+          margin-bottom: 28px;
         }
 
         table {
           width: 100%;
           border-collapse: collapse;
+          table-layout: fixed;
         }
 
         th, td {
@@ -783,8 +790,13 @@ function printTransportReport(rows, filter) {
 
         th {
           text-align: center;
+          font-size: 9px;
           font-weight: bold;
-          background: #f2f2f2;
+          height: 30px;
+        }
+
+        td {
+          font-size: 9px;
         }
 
         .center {
@@ -796,15 +808,16 @@ function printTransportReport(rows, filter) {
           white-space: nowrap;
         }
 
-        .date-group td {
-          font-weight: bold;
-          background: #eaeaea;
-          text-align: left;
+        .name-cell {
+          line-height: 1.4;
+        }
+
+        .nip {
+          font-size: 8px;
         }
 
         .signature-cell {
-          min-width: 55px;
-          height: 35px;
+          min-width: 45px;
         }
 
         .total-row td {
@@ -816,20 +829,29 @@ function printTransportReport(rows, filter) {
           justify-content: space-between;
           margin-top: 45px;
           page-break-inside: avoid;
-          text-align: center;
         }
 
         .sign-box {
-          width: 40%;
+          width: 42%;
+          text-align: center;
+          line-height: 1.5;
         }
 
         .sign-space {
-          height: 65px;
+          height: 75px;
         }
 
         .sign-name {
           font-weight: bold;
           text-decoration: underline;
+        }
+
+        .sign-nip {
+          font-size: 9px;
+        }
+
+        tr {
+          page-break-inside: avoid;
         }
 
         @media print {
@@ -843,26 +865,40 @@ function printTransportReport(rows, filter) {
 
     <body>
 
-      <h3>
+      <div class="heading">
         DAFTAR PENERIMAAN BIAYA TRANSPORT<br>
-        UPTD PUSKESMAS GEYER 2
-      </h3>
+        PUSKESMAS GEYER 2
+      </div>
 
-      <div class="subtitle">
-        ${programHeading}
+      <div class="program">
+        ${esc(programText)}
       </div>
 
       <div class="period">
-        Periode: ${esc(filter.month)}
+        Bulan ${esc(periodText)}
       </div>
 
       <table>
+        <colgroup>
+          <col style="width:4%">
+          <col style="width:19%">
+          <col style="width:8%">
+          <col style="width:11%">
+          <col style="width:12%">
+          <col style="width:10%">
+          <col style="width:7%">
+          <col style="width:11%">
+          <col style="width:9%">
+          <col style="width:9%">
+          <col style="width:8%">
+        </colgroup>
+
         <thead>
           <tr>
             <th>No</th>
             <th>Nama / NIP</th>
             <th>Gol.</th>
-            ${showProgram ? '<th>Program</th>' : ''}
+            <th>Tanggal Perjalanan Dinas</th>
             <th>Lokasi</th>
             <th>Biaya Transport</th>
             <th>Jumlah Hari</th>
@@ -877,9 +913,7 @@ function printTransportReport(rows, filter) {
           ${tableRows}
 
           <tr class="total-row">
-            <td colspan="${showProgram ? 5 : 4}" class="center">
-              JUMLAH
-            </td>
+            <td colspan="5" class="center">Jumlah</td>
             <td class="right">${money(grandTransport)}</td>
             <td class="center">${grandDays}</td>
             <td class="right">${money(grandTotal)}</td>
@@ -891,19 +925,21 @@ function printTransportReport(rows, filter) {
       <div class="signatures">
 
         <div class="sign-box">
-          <div>Mengetahui,</div>
+          <div>Mengetahui :</div>
+          <br>
           <div>Kepala UPTD Puskesmas Geyer 2</div>
           <div class="sign-space"></div>
           <div class="sign-name">dr. H. Yatino</div>
-          <div>NIP. 196908072002121005</div>
+          <div class="sign-nip">NIP. 196908072002121005</div>
         </div>
 
         <div class="sign-box">
           <div>Pengelola Keuangan BOK</div>
+          <br>
           <div>UPTD Puskesmas Geyer 2</div>
           <div class="sign-space"></div>
           <div class="sign-name">Sri Kusmini, Amd.Keb</div>
-          <div>NIP. 198302242017042004</div>
+          <div class="sign-nip">NIP. 198302242017042004</div>
         </div>
 
       </div>
@@ -918,4 +954,25 @@ function printTransportReport(rows, filter) {
     printWindow.focus();
     printWindow.print();
   };
+}
+
+// Mengubah tanggal YYYY-MM-DD menjadi DD/MM/YYYY.
+function formatPrintDate(date) {
+  if (!date || date === '-') return '-';
+
+  const parts = String(date).slice(0, 10).split('-');
+
+  if (parts.length !== 3) return date;
+
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+// Mengambil tahun dari data yang sedang dicetak.
+function getYearsFromRows(rows) {
+  const years = [...new Set(
+    rows.map(r => String(r.activity_date || '').slice(0, 4))
+      .filter(y => /^\d{4}$/.test(y))
+  )].sort();
+
+  return years.join(', ') || '-';
 }
