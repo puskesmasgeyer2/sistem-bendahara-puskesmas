@@ -477,7 +477,445 @@ $('content').onclick=async e=>{const edit=e.target.closest('[data-edit-place]'),
 async function renderStaffAdmin(){await loadMasters();$('content').innerHTML=`<section class="panel"><h3>Tambah petugas</h3><form id="staffForm" class="form-inline"><div><label>Nama petugas</label><input id="staffName" required></div><div><label>NIP</label><input id="staffNip"></div><div><label>Golongan</label><input id="staffGol"></div><div><label>Nomor kendaraan</label><input id="staffVehicle" placeholder="Contoh: K 1234 XX"></div><div class="span-all"><button type="submit">Simpan Petugas</button></div></form></section><section class="panel"><h3>Daftar petugas dan kendaraan</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Nama</th><th>NIP</th><th>Golongan</th><th>Nomor kendaraan</th><th>Aksi</th></tr></thead><tbody>${staff.filter(s=>s.is_active).map(s=>`<tr><td>${esc(s.full_name)}</td><td>${esc(s.employee_code||'-')}</td><td>${esc(s.golongan||'-')}</td><td>${esc(s.nomor_kendaraan||'-')}</td><td><button class="btn-sm btn-light" data-edit-staff="${esc(s.id)}">Edit</button> <button class="btn-sm btn-red" data-del-staff="${esc(s.id)}">Hapus</button></td></tr>`).join('')}</tbody></table></div></section>`;
 $('staffForm').onsubmit=async e=>{e.preventDefault();try{const {error}=await db.from('staff').insert({full_name:$('staffName').value.trim(),employee_code:$('staffNip').value.trim()||null,golongan:$('staffGol').value.trim()||null,nomor_kendaraan:$('staffVehicle').value.trim()||null,is_active:true});if(error)throw error;notice('Petugas berhasil ditambahkan.');await renderStaffAdmin();}catch(err){notice('Gagal menambah petugas: '+err.message,true);}};
 $('content').onclick=async e=>{const edit=e.target.closest('[data-edit-staff]'),del=e.target.closest('[data-del-staff]');if(edit){const s=staff.find(x=>x.id===edit.dataset.editStaff);const name=prompt('Nama petugas:',s.full_name);if(name===null)return;const nip=prompt('NIP:',s.employee_code||'');if(nip===null)return;const gol=prompt('Golongan:',s.golongan||'');if(gol===null)return;const vehicle=prompt('Nomor kendaraan:',s.nomor_kendaraan||'');if(vehicle===null)return;const {error}=await db.from('staff').update({full_name:name.trim(),employee_code:nip.trim()||null,golongan:gol.trim()||null,nomor_kendaraan:vehicle.trim()||null}).eq('id',s.id);if(error)notice(error.message,true);else{notice('Data petugas diperbarui.');await renderStaffAdmin();}}if(del&&confirm('Hapus/nonaktifkan petugas ini? Data lama tetap dipertahankan untuk riwayat.')){const {error}=await db.from('staff').update({is_active:false}).eq('id',del.dataset.delStaff);if(error)notice(error.message,true);else{notice('Petugas dinonaktifkan.');await renderStaffAdmin();}}};}
-async function renderReport(){await loadMasters();await loadClaims();const rows = claimRows(true).filter(
-  c => ['disetujui', 'dibayar'].includes(c.status)
-);const total=rows.reduce((a,c)=>a+Number(c.total_amount||0),0);$('content').innerHTML=`<section class="panel"><div class="section-head"><h3>Rekap pertanggungjawaban transport</h3><button id="exportCsv">Unduh CSV</button></div><div class="cards"><div class="metric"><small>Disetujui / dibayar</small><strong>${rows.length}</strong></div><div class="metric"><small>Total penerimaan</small><strong style="font-size:20px">${money(total)}</strong></div></div>${claimsTable(rows)}</section>`;$('exportCsv').onclick=()=>exportCsv(rows);}
+async function renderReport() {
+  await loadMasters();
+  await loadClaims();
+
+  // Hanya pengajuan yang sudah disetujui atau dibayar
+  const allRows = claimRows(true).filter(c =>
+    ['disetujui', 'dibayar'].includes(c.status)
+  );
+
+  // Urutkan tanggal dari yang terkecil
+  allRows.sort((a, b) =>
+    String(a.activity_date || '').localeCompare(String(b.activity_date || ''))
+  );
+
+  const monthNames = [
+    'Januari', 'Februari', 'Maret', 'April',
+    'Mei', 'Juni', 'Juli', 'Agustus',
+    'September', 'Oktober', 'November', 'Desember'
+  ];
+
+  $('content').innerHTML = `
+    <section class="panel">
+      <h3>Filter Rekap Pertanggungjawaban Transport</h3>
+
+      <div class="filters">
+        <div>
+          <label for="reportMonth">Bulan</label>
+          <select id="reportMonth">
+            <option value="">Semua Bulan</option>
+            ${monthNames.map((m, i) => `
+              <option value="${String(i + 1).padStart(2, '0')}">
+                ${m}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div>
+          <label for="reportProgram">Nama Program</label>
+          <select id="reportProgram">
+            <option value="">Semua Program</option>
+            ${programs.filter(p => p.is_active).map(p => `
+              <option value="${esc(p.id)}">
+                ${esc(p.program_name)}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <button id="showReport">Tampilkan Data</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h3>Rekap Pertanggungjawaban Transport</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button id="printReport">Cetak Rekap</button>
+          <button id="exportCsv" class="btn-sm btn-light">Unduh CSV</button>
+        </div>
+      </div>
+
+      <div id="reportSummary"></div>
+      <div id="reportResult"></div>
+    </section>
+  `;
+
+  // Fungsi menerapkan filter
+  function getFilteredRows() {
+    const month = $('reportMonth').value;
+    const programId = $('reportProgram').value;
+
+    return allRows.filter(c =>
+      (!month || String(c.activity_date || '').slice(5, 7) === month) &&
+      (!programId || String(c.program_id) === String(programId))
+    ).sort((a, b) =>
+      String(a.activity_date || '').localeCompare(String(b.activity_date || ''))
+    );
+  }
+
+  function getReportTitle() {
+    const month = $('reportMonth').value;
+    const programId = $('reportProgram').value;
+
+    const monthLabel = month
+      ? monthNames[Number(month) - 1]
+      : 'Semua Bulan';
+
+    const program = programs.find(p =>
+      String(p.id) === String(programId)
+    );
+
+    return {
+      month: monthLabel,
+      program: program ? program.program_name : 'Semua Program'
+    };
+  }
+
+  function displayReport(rows) {
+    const total = rows.reduce(
+      (sum, c) => sum + Number(c.total_amount || 0), 0
+    );
+
+    $('reportSummary').innerHTML = `
+      <div class="cards">
+        <div class="metric">
+          <small>Jumlah penerimaan</small>
+          <strong>${rows.length}</strong>
+        </div>
+        <div class="metric">
+          <small>Total penerimaan</small>
+          <strong style="font-size:20px">${money(total)}</strong>
+        </div>
+      </div>
+    `;
+
+    if (!rows.length) {
+      $('reportResult').innerHTML = `
+        <div class="empty">
+          Tidak ada data yang sesuai dengan filter.
+        </div>
+      `;
+      return;
+    }
+
+    $('reportResult').innerHTML = claimsTable(rows);
+  }
+
+  // Tampilan awal: semua data disetujui/dibayar
+  let displayedRows = getFilteredRows();
+  displayReport(displayedRows);
+
+  // Tombol tampilkan data
+  $('showReport').onclick = () => {
+    displayedRows = getFilteredRows();
+    displayReport(displayedRows);
+  };
+
+  // Tombol unduh CSV
+  $('exportCsv').onclick = () => {
+    exportCsv(displayedRows);
+  };
+
+  // Tombol cetak
+  $('printReport').onclick = () => {
+    const title = getReportTitle();
+    printTransportReport(displayedRows, title);
+  };
+}
 function exportCsv(rows){const keys=['activity_date','program_name','staff_name','employee_code','golongan','place_name','transport_amount','jumlah_hari','total_amount','nama_spbu','nomor_kendaraan','jenis_bbm','kebutuhan_bbm_liter','harga_per_liter','nominal_bbm','status'];const csv=[keys.join(','),...rows.map(r=>keys.map(k=>'"'+String(r[k]??'').replace(/"/g,'""')+'"').join(','))].join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='rekap-bendahara.csv';a.click();URL.revokeObjectURL(a.href);}
+function printTransportReport(rows, filter) {
+  if (!rows.length) {
+    alert('Tidak ada data yang dapat dicetak.');
+    return;
+  }
+
+  // Urutkan berdasarkan tanggal terkecil
+  const sortedRows = [...rows].sort((a, b) =>
+    String(a.activity_date || '').localeCompare(
+      String(b.activity_date || '')
+    )
+  );
+
+  // Kelompokkan data berdasarkan tanggal yang sama
+  const grouped = {};
+
+  sortedRows.forEach(row => {
+    const date = row.activity_date || '-';
+
+    if (!grouped[date]) {
+      grouped[date] = [];
+    }
+
+    grouped[date].push(row);
+  });
+
+  const dates = Object.keys(grouped).sort();
+
+  // Jika semua program dipilih, tampilkan kolom program
+  const showProgram = filter.program === 'Semua Program';
+
+  let number = 1;
+  let grandTotal = 0;
+  let grandTransport = 0;
+  let grandDays = 0;
+
+  let tableRows = '';
+
+  dates.forEach(date => {
+    const dateRows = grouped[date];
+
+    // Baris pemisah kelompok tanggal
+    tableRows += `
+      <tr class="date-group">
+        <td colspan="${showProgram ? 11 : 10}">
+          Tanggal Perjalanan Dinas: ${esc(date)}
+        </td>
+      </tr>
+    `;
+
+    dateRows.forEach(c => {
+      const transport = Number(c.transport_amount || 0);
+      const total = Number(c.total_amount || 0);
+      const days = Number(c.jumlah_hari || 1);
+
+      grandTransport += transport;
+      grandTotal += total;
+      grandDays += days;
+
+      tableRows += `
+        <tr>
+          <td class="center">${number++}</td>
+
+          <td>
+            <b>${esc(c.staff_name)}</b><br>
+            <small>${esc(c.employee_code || '-')}</small>
+          </td>
+
+          <td class="center">${esc(c.golongan || '-')}</td>
+
+          ${showProgram ? `
+            <td>${esc(c.program_name || '-')}</td>
+          ` : ''}
+
+          <td>${esc(c.place_name || '-')}</td>
+
+          <td class="right">${money(transport)}</td>
+
+          <td class="center">${days}</td>
+
+          <td class="right">${money(total)}</td>
+
+          <td>${esc(c.nama_spbu || '-')}</td>
+
+          <td class="center">${esc(c.nomor_kendaraan || '-')}</td>
+
+          <td class="signature-cell"></td>
+        </tr>
+      `;
+    });
+  });
+
+  const columnCount = showProgram ? 11 : 10;
+
+  const programHeading = filter.program === 'Semua Program'
+    ? 'SELURUH PROGRAM'
+    : esc(filter.program);
+
+  const printWindow = window.open('', '_blank');
+
+  if (!printWindow) {
+    alert('Jendela cetak diblokir browser. Izinkan pop-up untuk situs ini.');
+    return;
+  }
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html lang="id">
+    <head>
+      <meta charset="UTF-8">
+      <title>Rekap Pertanggungjawaban Transport</title>
+
+      <style>
+        @page {
+          size: A4 landscape;
+          margin: 12mm;
+        }
+
+        body {
+          font-family: Arial, sans-serif;
+          color: #000;
+          font-size: 10px;
+        }
+
+        h3 {
+          text-align: center;
+          font-size: 14px;
+          margin: 0 0 8px;
+        }
+
+        .subtitle {
+          text-align: center;
+          font-size: 12px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+
+        .period {
+          text-align: center;
+          margin-bottom: 18px;
+          font-size: 11px;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        th, td {
+          border: 1px solid #000;
+          padding: 5px 4px;
+          vertical-align: middle;
+        }
+
+        th {
+          text-align: center;
+          font-weight: bold;
+          background: #f2f2f2;
+        }
+
+        .center {
+          text-align: center;
+        }
+
+        .right {
+          text-align: right;
+          white-space: nowrap;
+        }
+
+        .date-group td {
+          font-weight: bold;
+          background: #eaeaea;
+          text-align: left;
+        }
+
+        .signature-cell {
+          min-width: 55px;
+          height: 35px;
+        }
+
+        .total-row td {
+          font-weight: bold;
+        }
+
+        .signatures {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 45px;
+          page-break-inside: avoid;
+          text-align: center;
+        }
+
+        .sign-box {
+          width: 40%;
+        }
+
+        .sign-space {
+          height: 65px;
+        }
+
+        .sign-name {
+          font-weight: bold;
+          text-decoration: underline;
+        }
+
+        @media print {
+          body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        }
+      </style>
+    </head>
+
+    <body>
+
+      <h3>
+        DAFTAR PENERIMAAN BIAYA TRANSPORT<br>
+        UPTD PUSKESMAS GEYER 2
+      </h3>
+
+      <div class="subtitle">
+        ${programHeading}
+      </div>
+
+      <div class="period">
+        Periode: ${esc(filter.month)}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>No</th>
+            <th>Nama / NIP</th>
+            <th>Gol.</th>
+            ${showProgram ? '<th>Program</th>' : ''}
+            <th>Lokasi</th>
+            <th>Biaya Transport</th>
+            <th>Jumlah Hari</th>
+            <th>Jumlah Penerimaan</th>
+            <th>Nama SPBU</th>
+            <th>No. Pol Kendaraan</th>
+            <th>TTD</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${tableRows}
+
+          <tr class="total-row">
+            <td colspan="${showProgram ? 5 : 4}" class="center">
+              JUMLAH
+            </td>
+            <td class="right">${money(grandTransport)}</td>
+            <td class="center">${grandDays}</td>
+            <td class="right">${money(grandTotal)}</td>
+            <td colspan="3"></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="signatures">
+
+        <div class="sign-box">
+          <div>Mengetahui,</div>
+          <div>Kepala UPTD Puskesmas Geyer 2</div>
+          <div class="sign-space"></div>
+          <div class="sign-name">dr. H. Yatino</div>
+          <div>NIP. 196908072002121005</div>
+        </div>
+
+        <div class="sign-box">
+          <div>Pengelola Keuangan BOK</div>
+          <div>UPTD Puskesmas Geyer 2</div>
+          <div class="sign-space"></div>
+          <div class="sign-name">Sri Kusmini, Amd.Keb</div>
+          <div>NIP. 198302242017042004</div>
+        </div>
+
+      </div>
+
+    </body>
+    </html>
+  `);
+
+  printWindow.document.close();
+
+  printWindow.onload = () => {
+    printWindow.focus();
+    printWindow.print();
+  };
+}
