@@ -272,70 +272,179 @@ async function renderForm(){
  $('content').addEventListener('change',e=>{
   if(e.target.matches('.row-type,.row-fuel'))updateRow(e.target.closest('tr'));
  });
- $('content').addEventListener('click',async e=>{
-  const btn=e.target.closest('[data-submit-row]');if(!btn)return;
-  const id=btn.dataset.submitRow,row=btn.closest('tr'),s=schedules.find(x=>x.id===id);if(!s)return;
-  const mode=row.querySelector('.row-type').value;
-  if(!mode){notice('Pilih Jenis Pengajuan terlebih dahulu.',true);return;}
-  const notes = row.querySelector('.row-notes').value.trim();
-const spbu = mode === 'bbm'
-  ? row.querySelector('.row-spbu').value.trim()
-  : null;
+ 
+$('content').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-submit-row]');
+  if (!btn || btn.disabled) return;
 
-// Ambil nomor kendaraan langsung dari master petugas berdasarkan staff_id jadwal
-const petugas = staff.find(
-  x => String(x.id) === String(s.staff_id)
-);
+  const id = btn.dataset.submitRow;
+  const row = btn.closest('tr');
+  const s = schedules.find(x => x.id === id);
 
-const vehicle = mode === 'bbm'
-  ? String(petugas?.nomor_kendaraan || '').trim()
-  : null;
-  let fuel=null,price=0,litres=0,fuelCost=0,transport=0;
+  if (!s) return;
 
-  if(mode==='bbm'){
-   fuel=row.querySelector('.row-fuel').value;
-   price=Number(btn.dataset.price||0);litres=Number(btn.dataset.litres||0);
-   const km=Number((row.querySelector('[data-distance]')?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
-   if(!fuel||!price||!litres||!km){notice('Pilih BBM dan pastikan harga serta jarak tersedia.',true);return;}
-   if (!petugas || !vehicle) {
-  notice(
-    'Nomor kendaraan petugas belum tersedia. Periksa menu Petugas & Kendaraan.',
-    true
-  );
-  return;
-}
-   fuelCost=price*litres;
-  }else{
-   transport=TARIF_8_JAM;
+  const mode = row.querySelector('.row-type').value;
+
+  if (!mode) {
+    notice('Pilih Jenis Pengajuan terlebih dahulu.', true);
+    return;
   }
 
-  btn.disabled=true;btn.textContent='Mengirim…';
-  try{
-   const payload = {
-  schedule_id: s.id,
-  transport_amount: transport,
-  jenis_bbm: fuel,
-  kebutuhan_bbm_liter: litres,
-  harga_per_liter: price,
-  nominal_bbm: fuelCost,
-  status: 'diajukan',
-  catatan: notes || null,
-  created_by: sessionUser.id,
-  nama_spbu: spbu,
-  nomor_kendaraan: mode === 'bbm' ? vehicle : null,
-  jumlah_hari: 1
-};
-   // total_amount tidak dikirim karena kolom tersebut dihitung otomatis oleh PostgreSQL.
-   const {data:savedClaim,error}=await db.from('transport_claims')
-    .insert(payload).select().single();
-   if(error)throw error;
-   claims.push(savedClaim);
-   row.remove();
-   const body=$('content').querySelector('.bulk-claim-table tbody');
-   if(body&&!body.querySelector('tr'))body.innerHTML='<tr><td colspan="15" class="empty">Semua jadwal sudah diajukan.</td></tr>';
-   notice(`Pengajuan ${mode==='bbm'?'BBM':'8 Jam'} untuk ${enrichSchedule(s).staff_name} — ${enrichSchedule(s).program_name} berhasil dikirim.`);
-  }catch(err){notice('Gagal menyimpan pengajuan: '+err.message,true);btn.disabled=false;btn.textContent='Ajukan';}
- });
+  const notes = row.querySelector('.row-notes').value.trim();
+
+  const spbu = mode === 'bbm'
+    ? row.querySelector('.row-spbu').value.trim()
+    : null;
+
+  // Cari data petugas berdasarkan jadwal.
+  const petugas = staff.find(
+    x => String(x.id) === String(s.staff_id)
+  );
+
+  const vehicle = mode === 'bbm'
+    ? String(petugas?.nomor_kendaraan || '').trim()
+    : null;
+
+  let fuel = null;
+  let price = 0;
+  let litres = 0;
+  let fuelCost = 0;
+  let transport = 0;
+
+  if (mode === 'bbm') {
+    fuel = row.querySelector('.row-fuel').value;
+    price = Number(btn.dataset.price || 0);
+    litres = Number(btn.dataset.litres || 0);
+
+    const km = Number(
+      (row.querySelector('[data-distance]')?.textContent || '')
+        .replace(/[^0-9.,]/g, '')
+        .replace(',', '.')
+    ) || 0;
+
+    if (!fuel || !price || !litres || !km) {
+      notice('Pilih BBM dan pastikan harga serta jarak tersedia.', true);
+      return;
+    }
+
+    if (!petugas || !vehicle) {
+      notice(
+        'Nomor kendaraan petugas belum tersedia. Periksa menu Petugas & Kendaraan.',
+        true
+      );
+      return;
+    }
+
+    if (!spbu) {
+      notice('Nama SPBU harus diisi untuk pengajuan BBM.', true);
+      return;
+    }
+
+    fuelCost = price * litres;
+
+  } else if (mode === '8_jam') {
+    transport = 150000;
+
+  } else {
+    notice('Jenis pengajuan tidak valid.', true);
+    return;
+  }
+
+  // Cegah klik ganda selama proses penyimpanan.
+  btn.disabled = true;
+  btn.textContent = 'Mengirim…';
+
+  try {
+    const payload = {
+      schedule_id: s.id,
+      transport_amount: transport,
+      jenis_bbm: fuel,
+      kebutuhan_bbm_liter: litres,
+      harga_per_liter: price,
+      nominal_bbm: fuelCost,
+      status: 'diajukan',
+      catatan: notes || null,
+      nama_spbu: spbu,
+      nomor_kendaraan: mode === 'bbm' ? vehicle : null,
+      jumlah_hari: 1
+    };
+
+    // Cari pengajuan lama dengan status Ditolak.
+    const rejectedClaim = claims.find(c =>
+      String(c.schedule_id) === String(s.id) &&
+      c.status === 'ditolak'
+    );
+
+    let savedClaim;
+
+    if (rejectedClaim) {
+      // Jika pernah ditolak, perbarui data lama.
+      const { data, error } = await db
+        .from('transport_claims')
+        .update({
+          ...payload,
+          updated_by: sessionUser.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', rejectedClaim.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      savedClaim = data;
+
+      // Perbarui data lokal.
+      claims = claims.map(c =>
+        String(c.id) === String(rejectedClaim.id)
+          ? savedClaim
+          : c
+      );
+
+    } else {
+      // Jika belum pernah diajukan, buat data baru.
+      const { data, error } = await db
+        .from('transport_claims')
+        .insert({
+          ...payload,
+          created_by: sessionUser.id
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      savedClaim = data;
+      claims.push(savedClaim);
+    }
+
+    row.remove();
+
+    const body = $('content').querySelector('.bulk-claim-table tbody');
+
+    if (body && !body.querySelector('tr')) {
+      body.innerHTML = `
+        <tr>
+          <td colspan="15" class="empty">
+            Semua jadwal sudah diajukan.
+          </td>
+        </tr>
+      `;
+    }
+
+    notice(
+      rejectedClaim
+        ? `Pengajuan ulang ${mode === 'bbm' ? 'BBM' : '8 Jam'} berhasil dikirim dan menunggu verifikasi Bendahara.`
+        : `Pengajuan ${mode === 'bbm' ? 'BBM' : '8 Jam'} berhasil dikirim dan menunggu verifikasi Bendahara.`
+    );
+
+  } catch (err) {
+    notice('Gagal menyimpan pengajuan: ' + err.message, true);
+
+    btn.disabled = false;
+    btn.textContent = 'Ajukan';
+  }
+});
 }
 
 async function renderClaims(finance) {
@@ -627,99 +736,32 @@ async function renderReport() {
   };
 }
 function exportCsv(rows){const keys=['activity_date','program_name','staff_name','employee_code','golongan','place_name','transport_amount','jumlah_hari','total_amount','nama_spbu','nomor_kendaraan','jenis_bbm','kebutuhan_bbm_liter','harga_per_liter','nominal_bbm','status'];const csv=[keys.join(','),...rows.map(r=>keys.map(k=>'"'+String(r[k]??'').replace(/"/g,'""')+'"').join(','))].join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='rekap-bendahara.csv';a.click();URL.revokeObjectURL(a.href);}
+
 function printTransportReport(rows, filter) {
   if (!rows.length) {
     alert('Tidak ada data yang dapat dicetak.');
     return;
   }
 
-  // Urutkan tanggal terkecil, lalu nama petugas.
+  // Urutkan berdasarkan tanggal, kemudian nama petugas.
   const sortedRows = [...rows].sort((a, b) =>
     String(a.activity_date || '').localeCompare(
       String(b.activity_date || '')
-    ) || String(a.staff_name || '').localeCompare(
+    ) ||
+    String(a.staff_name || '').localeCompare(
       String(b.staff_name || '')
     )
   );
 
-  // Kelompokkan petugas berdasarkan tanggal kegiatan.
-  const grouped = {};
+  // Pisahkan pengajuan BBM dan 8 Jam.
+  const bbmRows = sortedRows.filter(c => !!c.jenis_bbm);
+  const eightHourRows = sortedRows.filter(c => !c.jenis_bbm);
 
-  sortedRows.forEach(row => {
-    const date = row.activity_date || '-';
-
-    if (!grouped[date]) {
-      grouped[date] = [];
-    }
-
-    grouped[date].push(row);
-  });
-
-  const dates = Object.keys(grouped).sort();
-
-  let tableRows = '';
-  let number = 1;
-  let grandTransport = 0;
-  let grandTotal = 0;
-  let grandDays = 0;
-
-  dates.forEach(date => {
-    const dateRows = grouped[date];
-
-    dateRows.forEach((c, index) => {
-      const transport = Number(c.transport_amount || 0);
-      const total = Number(c.total_amount || 0);
-      const days = Number(c.jumlah_hari || 1);
-
-      grandTransport += transport;
-      grandTotal += total;
-      grandDays += days;
-
-      const dateCell = index === 0
-        ? `<td class="center" rowspan="${dateRows.length}">
-             ${esc(formatPrintDate(date))}
-           </td>`
-        : '';
-
-      const numberCell = index === 0
-        ? `<td class="center" rowspan="${dateRows.length}">
-             ${number++}
-           </td>`
-        : '';
-
-      tableRows += `
-        <tr>
-          ${numberCell}
-
-          <td class="name-cell">
-            ${esc(c.staff_name || '-')}
-            <br>
-            <span class="nip">NIP. ${esc(c.employee_code || '-')}</span>
-          </td>
-
-          <td class="center">
-            ${esc(c.golongan || '-')}
-          </td>
-
-          ${dateCell}
-
-          <td>${esc(c.place_name || '-')}</td>
-
-          <td class="right">${money(transport)}</td>
-
-          <td class="center">${days}</td>
-
-          <td class="right">${money(total)}</td>
-
-          <td class="center">${esc(c.nama_spbu || '-')}</td>
-
-          <td class="center">${esc(c.nomor_kendaraan || '-')}</td>
-
-          <td class="signature-cell"></td>
-        </tr>
-      `;
-    });
-  });
+  const monthNames = [
+    'Januari', 'Februari', 'Maret', 'April',
+    'Mei', 'Juni', 'Juli', 'Agustus',
+    'September', 'Oktober', 'November', 'Desember'
+  ];
 
   const periodText = filter.month === 'Semua Bulan'
     ? getYearsFromRows(sortedRows)
@@ -728,6 +770,199 @@ function printTransportReport(rows, filter) {
   const programText = filter.program === 'Semua Program'
     ? 'SELURUH PROGRAM'
     : filter.program;
+
+  // Bagian tanda tangan.
+  const signatures = `
+    <div class="signatures">
+      <div class="sign-box">
+        <div>Mengetahui :</div>
+        <br>
+        <div>Kepala UPTD Puskesmas Geyer 2</div>
+        <div class="sign-space"></div>
+        <div class="sign-name">dr. H. Yatino</div>
+        <div>NIP. 196908072002121005</div>
+      </div>
+
+      <div class="sign-box">
+        <div>Pengelola Keuangan BOK</div>
+        <br>
+        <div>UPTD Puskesmas Geyer 2</div>
+        <div class="sign-space"></div>
+        <div class="sign-name">Sri Kusmini, Amd.Keb</div>
+        <div>NIP. 198302242017042004</div>
+      </div>
+    </div>
+  `;
+
+  // Membuat halaman khusus pengajuan BBM.
+  function buildBbmPage(data) {
+    if (!data.length) return '';
+
+    let totalLiter = 0;
+    let totalBbm = 0;
+    let tableRows = '';
+
+    data.forEach((c, i) => {
+      const liter = Number(c.kebutuhan_bbm_liter || 0);
+      const nominal = Number(c.nominal_bbm || 0);
+
+      totalLiter += liter;
+      totalBbm += nominal;
+
+      tableRows += `
+        <tr>
+          <td class="center">${i + 1}</td>
+          <td>
+            <b>${esc(c.staff_name || '-')}</b><br>
+            <span class="small">NIP. ${esc(c.employee_code || '-')}</span>
+          </td>
+          <td class="center">${esc(c.golongan || '-')}</td>
+          <td class="center">${esc(formatPrintDate(c.activity_date))}</td>
+          <td>${esc(c.place_name || '-')}</td>
+          <td class="center">${esc(c.jenis_bbm || '-')}</td>
+          <td class="center">${liter} L</td>
+          <td class="right">${money(c.harga_per_liter || 0)}</td>
+          <td class="right">${money(nominal)}</td>
+          <td>${esc(c.nama_spbu || '-')}</td>
+          <td class="center">${esc(c.nomor_kendaraan || '-')}</td>
+          <td></td>
+        </tr>
+      `;
+    });
+
+    return `
+      <section class="print-page">
+        <div class="heading">
+          DAFTAR PENERIMAAN BIAYA TRANSPORT<br>
+          PUSKESMAS GEYER 2
+        </div>
+
+        <div class="subtitle">PENGAJUAN BBM</div>
+        <div class="subtitle">${esc(programText)}</div>
+        <div class="period">Bulan ${esc(periodText)}</div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Nama / NIP</th>
+              <th>Gol.</th>
+              <th>Tanggal Kegiatan</th>
+              <th>Lokasi</th>
+              <th>Jenis BBM</th>
+              <th>Liter</th>
+              <th>Harga / Liter</th>
+              <th>Nominal BBM</th>
+              <th>Nama SPBU</th>
+              <th>No. Pol Kendaraan</th>
+              <th>TTD</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+            <tr class="total-row">
+              <td colspan="6" class="center">Jumlah</td>
+              <td class="center">${totalLiter} L</td>
+              <td></td>
+              <td class="right">${money(totalBbm)}</td>
+              <td colspan="3"></td>
+            </tr>
+          </tbody>
+        </table>
+
+        ${signatures}
+      </section>
+    `;
+  }
+
+  // Membuat halaman khusus pengajuan 8 Jam.
+  function buildEightHourPage(data) {
+    if (!data.length) return '';
+
+    let totalTransport = 0;
+    let totalPenerimaan = 0;
+    let totalDays = 0;
+    let tableRows = '';
+
+    data.forEach((c, i) => {
+      const transport = Number(c.transport_amount || 0);
+      const total = Number(c.total_amount ?? transport);
+      const days = Number(c.jumlah_hari || 1);
+
+      totalTransport += transport;
+      totalPenerimaan += total;
+      totalDays += days;
+
+      tableRows += `
+        <tr>
+          <td class="center">${i + 1}</td>
+          <td>
+            <b>${esc(c.staff_name || '-')}</b><br>
+            <span class="small">NIP. ${esc(c.employee_code || '-')}</span>
+          </td>
+          <td class="center">${esc(c.golongan || '-')}</td>
+          <td class="center">${esc(formatPrintDate(c.activity_date))}</td>
+          <td>${esc(c.place_name || '-')}</td>
+          <td class="right">${money(transport)}</td>
+          <td class="center">${days}</td>
+          <td class="right">${money(total)}</td>
+          <td></td>
+        </tr>
+      `;
+    });
+
+    return `
+      <section class="print-page">
+        <div class="heading">
+          DAFTAR PENERIMAAN BIAYA TRANSPORT<br>
+          PUSKESMAS GEYER 2
+        </div>
+
+        <div class="subtitle">PENGAJUAN 8 JAM</div>
+        <div class="subtitle">${esc(programText)}</div>
+        <div class="period">Bulan ${esc(periodText)}</div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Nama / NIP</th>
+              <th>Gol.</th>
+              <th>Tanggal Kegiatan</th>
+              <th>Lokasi</th>
+              <th>Biaya Transport</th>
+              <th>Jumlah Hari</th>
+              <th>Jumlah Penerimaan</th>
+              <th>TTD</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+            <tr class="total-row">
+              <td colspan="5" class="center">Jumlah</td>
+              <td class="right">${money(totalTransport)}</td>
+              <td class="center">${totalDays}</td>
+              <td class="right">${money(totalPenerimaan)}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        ${signatures}
+      </section>
+    `;
+  }
+
+  // Susun halaman hanya jika ada datanya.
+  let pagesHtml = '';
+
+  if (bbmRows.length) {
+    pagesHtml += buildBbmPage(bbmRows);
+  }
+
+  if (eightHourRows.length) {
+    pagesHtml += buildEightHourPage(eightHourRows);
+  }
 
   const printWindow = window.open('', '_blank');
 
@@ -755,31 +990,40 @@ function printTransportReport(rows, filter) {
           color: #000;
         }
 
+        .print-page {
+          page-break-after: always;
+        }
+
+        .print-page:last-child {
+          page-break-after: auto;
+        }
+
         .heading {
           text-align: center;
           font-weight: bold;
           font-size: 13px;
           margin-top: 12px;
-          margin-bottom: 18px;
+          margin-bottom: 15px;
           line-height: 1.5;
         }
 
-        .program {
+        .subtitle {
           text-align: center;
-          font-size: 12px;
-          margin-bottom: 7px;
+          font-size: 11px;
+          font-weight: bold;
+          margin-bottom: 5px;
         }
 
         .period {
           text-align: center;
-          font-size: 11px;
-          margin-bottom: 28px;
+          font-size: 10px;
+          margin-bottom: 22px;
         }
 
         table {
           width: 100%;
           border-collapse: collapse;
-          table-layout: fixed;
+          table-layout: auto;
         }
 
         th, td {
@@ -792,7 +1036,6 @@ function printTransportReport(rows, filter) {
           text-align: center;
           font-size: 9px;
           font-weight: bold;
-          height: 30px;
         }
 
         td {
@@ -808,16 +1051,8 @@ function printTransportReport(rows, filter) {
           white-space: nowrap;
         }
 
-        .name-cell {
-          line-height: 1.4;
-        }
-
-        .nip {
+        .small {
           font-size: 8px;
-        }
-
-        .signature-cell {
-          min-width: 45px;
         }
 
         .total-row td {
@@ -827,7 +1062,7 @@ function printTransportReport(rows, filter) {
         .signatures {
           display: flex;
           justify-content: space-between;
-          margin-top: 45px;
+          margin-top: 40px;
           page-break-inside: avoid;
         }
 
@@ -838,16 +1073,12 @@ function printTransportReport(rows, filter) {
         }
 
         .sign-space {
-          height: 75px;
+          height: 65px;
         }
 
         .sign-name {
           font-weight: bold;
           text-decoration: underline;
-        }
-
-        .sign-nip {
-          font-size: 9px;
         }
 
         tr {
@@ -864,86 +1095,7 @@ function printTransportReport(rows, filter) {
     </head>
 
     <body>
-
-      <div class="heading">
-        DAFTAR PENERIMAAN BIAYA TRANSPORT<br>
-        PUSKESMAS GEYER 2
-      </div>
-
-      <div class="program">
-        ${esc(programText)}
-      </div>
-
-      <div class="period">
-        Bulan ${esc(periodText)}
-      </div>
-
-      <table>
-        <colgroup>
-          <col style="width:4%">
-          <col style="width:19%">
-          <col style="width:8%">
-          <col style="width:11%">
-          <col style="width:12%">
-          <col style="width:10%">
-          <col style="width:7%">
-          <col style="width:11%">
-          <col style="width:9%">
-          <col style="width:9%">
-          <col style="width:8%">
-        </colgroup>
-
-        <thead>
-          <tr>
-            <th>No</th>
-            <th>Nama / NIP</th>
-            <th>Gol.</th>
-            <th>Tanggal Perjalanan Dinas</th>
-            <th>Lokasi</th>
-            <th>Biaya Transport</th>
-            <th>Jumlah Hari</th>
-            <th>Jumlah Penerimaan</th>
-            <th>Nama SPBU</th>
-            <th>No. Pol Kendaraan</th>
-            <th>TTD</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          ${tableRows}
-
-          <tr class="total-row">
-            <td colspan="5" class="center">Jumlah</td>
-            <td class="right">${money(grandTransport)}</td>
-            <td class="center">${grandDays}</td>
-            <td class="right">${money(grandTotal)}</td>
-            <td colspan="3"></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div class="signatures">
-
-        <div class="sign-box">
-          <div>Mengetahui :</div>
-          <br>
-          <div>Kepala UPTD Puskesmas Geyer 2</div>
-          <div class="sign-space"></div>
-          <div class="sign-name">dr. H. Yatino</div>
-          <div class="sign-nip">NIP. 196908072002121005</div>
-        </div>
-
-        <div class="sign-box">
-          <div>Pengelola Keuangan BOK</div>
-          <br>
-          <div>UPTD Puskesmas Geyer 2</div>
-          <div class="sign-space"></div>
-          <div class="sign-name">Sri Kusmini, Amd.Keb</div>
-          <div class="sign-nip">NIP. 198302242017042004</div>
-        </div>
-
-      </div>
-
+      ${pagesHtml}
     </body>
     </html>
   `);
