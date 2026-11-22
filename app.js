@@ -47,28 +47,22 @@ async function loadClaims(){const {data,error}=await db.from('transport_claims')
 function rateFor(placeId,method){return rates.find(r=>r.place_id===placeId&&r.metode===method)||rates.find(r=>!r.place_id&&r.metode===method);}
 
 function golonganDisplay(data) {
-  const golongan = String(data?.golongan || '').trim();
   const pangkat = String(data?.pangkat || '').trim();
+  const golongan = String(data?.golongan || '').trim();
   const ruang = String(data?.ruang || '').trim();
 
-  const bagian = [];
+  // Format: Pangkat/Golongan Ruang
+  // PNS: Pengatur Muda Tingkat I/II D
+  // PPPK: IX (karena pangkat dan ruang kosong)
 
-  if (golongan) {
-    bagian.push(`<b>${esc(golongan)}</b>`);
-  }
+  const identitas = [
+    pangkat && golongan
+      ? `${pangkat}/${golongan}`
+      : (pangkat || golongan),
+    ruang
+  ].filter(Boolean).join(' ');
 
-  // Pangkat dan ruang hanya ditampilkan jika tersedia.
-  if (pangkat) {
-    bagian.push(esc(pangkat));
-  }
-
-  if (ruang) {
-    bagian.push(`Ruang ${esc(ruang)}`);
-  }
-
-  return bagian.length
-    ? bagian.join('<br>')
-    : '-';
+  return identitas ? esc(identitas) : '-';
 }
 
 function enrichSchedule(s) {
